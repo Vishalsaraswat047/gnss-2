@@ -1,0 +1,6 @@
+{
+  "name": "GNSS-PREDICT",
+  "description": "AI/ML predictive monitoring system forecasting time-varying satellite clock and ephemeris parameter error build-up.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
