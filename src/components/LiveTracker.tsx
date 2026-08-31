@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Satellite, MapPin, Radio, Eye, Navigation, Search, Crosshair, Clock, AlertCircle, ExternalLink, Copy, Play, Pause, RefreshCw } from 'lucide-react';
-import { N2YO_API_KEY, getTLE, getPositions, getVisualPasses, getRadioPasses, getAbove, fmtUTC, TleResponse, PositionsResponse, VisualPassesResponse, AboveResponse } from '../services/n2yo';
+import { N2YO_API_KEY, getTLE, getPositions, getVisualPasses, getRadioPasses, getAbove, fmtUTC, generateSyntheticPositions, generateSyntheticTLE, TleResponse, PositionsResponse, VisualPassesResponse, AboveResponse } from '../services/n2yo';
 
 const QUICK_SATS = [
+  { id: 1, name: 'SAT-01 (Synthetic MEO) — Dashboard' },
   { id: 25544, name: 'ISS (SPACE STATION)' },
   { id: 20580, name: 'HST (Hubble)' },
   { id: 33591, name: 'NOAA 19' },
@@ -170,7 +171,7 @@ export const LiveTracker: React.FC = () => {
   const [lat, setLat] = useState<number>(28.6139);
   const [lng, setLng] = useState<number>(77.2090);
   const [alt, setAlt] = useState<number>(0);
-  const [noradId, setNoradId] = useState<number>(25544);
+  const [noradId, setNoradId] = useState<number>(1);
   const [seconds, setSeconds] = useState<number>(15);
   const [days, setDays] = useState<number>(2);
   const [minVis, setMinVis] = useState<number>(300);
@@ -228,26 +229,71 @@ export const LiveTracker: React.FC = () => {
   // reset anim when new positions arrive
   useEffect(() => { setAnimIdx(0); }, [positions]);
 
+  // Auto-load SAT-01 synthetic live on mount / when SAT-01 selected — so dashboard satellite always shows moving
+  useEffect(() => {
+    if (noradId === 1 && !positions) {
+      const r = generateSyntheticPositions(lat, lng, alt, seconds, 'SAT-01 (Synthetic MEO)');
+      setPositions(r);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noradId]);
+
   const handleTLE = async () => {
     setLoading('tle'); setError(null);
     try {
+      if (noradId === 1) {
+        // SAT-01 synthetic — dashboard satellite, always available (no API)
+        const r = generateSyntheticTLE(1, 'SAT-01 (Synthetic MEO)');
+        setTle(r);
+        setActivePane('tle');
+        setError(null);
+        return;
+      }
       const r = await getTLE(noradId);
       setTle(r);
       setActivePane('tle');
     } catch (e: any) {
-      setError(e.message || 'Failed to fetch TLE. Check API key limit (1000/h) or NORAD ID.');
+      // Fallback to synthetic for SAT-01 case, or show error with synthetic option
+      if (noradId === 1) {
+        setTle(generateSyntheticTLE(1, 'SAT-01 (Synthetic MEO)'));
+        setActivePane('tle');
+        setError(null);
+      } else {
+        setError((e.message || 'Failed to fetch TLE') + ' — tip: select SAT-01 (Synthetic MEO) for dashboard satellite live demo (no API needed), or check key limit 1000/h.');
+      }
     } finally { setLoading(null); }
   };
 
   const handlePositions = async () => {
     setLoading('positions'); setError(null);
     try {
+      if (noradId === 1) {
+        // SAT-01 synthetic live — mirrors dashboard's SAT-01 (7-day training basis, not N2YO)
+        const r = generateSyntheticPositions(lat, lng, alt, seconds, 'SAT-01 (Synthetic MEO)');
+        setPositions(r);
+        setActivePane('positions');
+        // keep error null but show info that this is synthetic matching dashboard
+        setError(null);
+        return;
+      }
       const r = await getPositions(noradId, lat, lng, alt, seconds);
       setPositions(r);
       setActivePane('positions');
     } catch (e: any) {
-      setError(e.message || 'Failed to fetch positions. If CORS error, check N2YO availability.');
-      setLive(false);
+      const msg = e.message || 'Failed to fetch';
+      // Auto-fallback to SAT-01 synthetic so map still moves — as user requested dashboard satellite live location
+      if (String(msg).toLowerCase().includes('failed to fetch') || String(msg).includes('CORS') || String(msg).includes('NetworkError')) {
+        const r = generateSyntheticPositions(lat, lng, alt, seconds, 'SAT-01 (Synthetic MEO) — fallback');
+        setPositions(r);
+        setActivePane('positions');
+        setError(`N2YO fetch failed (${msg}) — showing SAT-01 Synthetic live (dashboard's SAT-01, 7-day XGBoost basis, MEO 12h) so map keeps moving. Select SAT-01 for native dashboard satellite, or retry ISS (25544) with CORS enabled.`);
+        // do not disable live — synthetic live can keep moving
+      } else {
+        setError(msg + ' — showing SAT-01 Synthetic fallback. Click SAT-01 button for dashboard satellite live demo.');
+        const r = generateSyntheticPositions(lat, lng, alt, seconds, 'SAT-01 (Synthetic MEO) — fallback');
+        setPositions(r);
+        setActivePane('positions');
+      }
     } finally { setLoading(null); }
   };
 
