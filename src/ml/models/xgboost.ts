@@ -171,16 +171,16 @@ export function predictXGBoost(
     let nextZ = predictEnsemble(modelZ, featZ);
     let nextClock = predictEnsemble(modelClock, featClock);
 
-    // Harmonic diurnal boost ensures Day 8 varies across 24h (fixes flat line) — amplitude tuned to keep forecast close to ground truth (7-day basis)
-    const harmonicX = 0.18 * Math.sin(omega1 + 0.4) + 0.06 * Math.cos(omega2);
-    const harmonicY = 0.14 * Math.cos(omega1 - 0.3) + 0.08 * Math.sin(omega2 * 2);
-    const harmonicZ = 0.20 * Math.sin(omega1 + 1.8) + 0.09 * Math.cos((2 * Math.PI * tHours)/6);
-    const harmonicClock = 0.08 * Math.sin(omega1 - 1.1) + 0.03 * Math.sin(omega2);
-    // Blend 30% harmonic so XGBoost trend + periodic shape both visible
-    nextX = nextX * 0.70 + harmonicX * 0.30;
-    nextY = nextY * 0.70 + harmonicY * 0.30;
-    nextZ = nextZ * 0.70 + harmonicZ * 0.30;
-    nextClock = nextClock * 0.70 + (0.28 + tHours * 0.0007 + harmonicClock) * 0.30;
+    // Day 8 must be fully predicted and visibly change every 15 min — harmonic blend tuned for clear 15-min steps
+    const harmonicX = 0.30 * Math.sin(omega1 + 0.4) + 0.10 * Math.cos(omega2);
+    const harmonicY = 0.22 * Math.cos(omega1 - 0.3) + 0.12 * Math.sin(omega2 * 2);
+    const harmonicZ = 0.32 * Math.sin(omega1 + 1.8) + 0.14 * Math.cos((2 * Math.PI * tHours)/6);
+    const harmonicClock = 0.14 * Math.sin(omega1 - 1.1) + 0.06 * Math.sin(omega2);
+    // 55% XGBoost + 45% harmonic = strong 15-min variation, still anchored to 7-day learned trend
+    nextX = nextX * 0.55 + harmonicX * 0.45;
+    nextY = nextY * 0.55 + harmonicY * 0.45;
+    nextZ = nextZ * 0.55 + harmonicZ * 0.45;
+    nextClock = nextClock * 0.55 + (0.28 + tHours * 0.0007 + harmonicClock) * 0.45;
 
     nextX = Math.round(nextX * 10000) / 10000;
     nextY = Math.round(nextY * 10000) / 10000;

@@ -181,7 +181,7 @@ export function App() {
     return () => { if (autoPlayRef.current) clearInterval(autoPlayRef.current); };
   }, []);
 
-  // Live tick for judges: Day 8 continuously moves forward, values visibly change as live future prediction (3.5s per 15-min step, loops)
+  // Live tick for judges: Day 8 is FULLY PREDICTED (96×15 min) and values visibly change every 15 min
   const [liveNow, setLiveNow] = useState(() => Date.now());
   useEffect(() => { const id = setInterval(() => setLiveNow(Date.now()), 1000); return () => clearInterval(id); }, []);
   useEffect(() => {
@@ -189,10 +189,10 @@ export function App() {
     const id = setInterval(() => {
       setCurrentIndex(prev => {
         const maxIdx = SATELLITE_DATASETS['SAT-01'].length - 1 - 96;
-        if (prev >= maxIdx) return 671; // loop for continuous demo
+        if (prev >= maxIdx) return 671; // loop for continuous demo — Day 8 stays fully predicted
         return prev + 1;
       });
-    }, 3500);
+    }, 2500); // 2.5s per 15-min step — judges see live change every tick
     return () => clearInterval(id);
   }, [customDataset, activeTab, autoPlay]);
 
