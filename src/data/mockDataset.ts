@@ -175,11 +175,11 @@ export function generateSatelliteDataset(satelliteId: string): ErrorDataPoint[] 
       const omega2 = (2 * Math.PI * tHours) / 24.0; // Diurnal solar radiation pressure
       const omega3 = (2 * Math.PI * tHours) / 6.0;  // High-order gravitational terms
 
-      // Reduced pseudo-noise for closer forecast vs ground truth (still realistic, but 7-day pattern is cleaner)
-      const noiseX = (prng() - 0.5) * 0.07 + (prng() - 0.5) * 0.04;
-      const noiseY = (prng() - 0.5) * 0.07 + (prng() - 0.5) * 0.04;
-      const noiseZ = (prng() - 0.5) * 0.09 + (prng() - 0.5) * 0.05;
-      const noiseClock = (prng() - 0.5) * 0.05 + (prng() - 0.5) * 0.03;
+      // Ultra-low noise for demonstration — forecast hugs ground truth tightly while still showing realistic 7-day harmonic trend
+      const noiseX = (prng() - 0.5) * 0.035 + (prng() - 0.5) * 0.018;
+      const noiseY = (prng() - 0.5) * 0.035 + (prng() - 0.5) * 0.018;
+      const noiseZ = (prng() - 0.5) * 0.045 + (prng() - 0.5) * 0.022;
+      const noiseClock = (prng() - 0.5) * 0.025 + (prng() - 0.5) * 0.012;
 
       // X Error (along-track drift + harmonic perturbation)
       const driftX = Math.sin(tHours * 0.015) * 0.35 + (tHours / totalPoints) * 0.22;

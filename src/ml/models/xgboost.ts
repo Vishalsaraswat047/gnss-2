@@ -17,8 +17,8 @@ interface BoostedEnsemble {
 function trainBoostedRegressor(
   X: number[][],
   y: number[],
-  numTrees: number = 24,
-  learningRate: number = 0.15
+  numTrees: number = 80,
+  learningRate: number = 0.07
 ): BoostedEnsemble {
   const n = y.length;
   if (n === 0) return { baseValue: 0, learningRate, stumps: [] };
@@ -40,12 +40,14 @@ function trainBoostedRegressor(
       const featVals = X.map((row) => row[f]);
       // Sample 8 quantile candidates
       const sorted = [...featVals].sort((a, b) => a - b);
-      const thresholds = [
-        sorted[Math.floor(n * 0.15)] ?? 0,
+       const thresholds = [
+        sorted[Math.floor(n * 0.10)] ?? 0,
+        sorted[Math.floor(n * 0.20)] ?? 0,
         sorted[Math.floor(n * 0.35)] ?? 0,
         sorted[Math.floor(n * 0.50)] ?? 0,
         sorted[Math.floor(n * 0.65)] ?? 0,
-        sorted[Math.floor(n * 0.85)] ?? 0
+        sorted[Math.floor(n * 0.80)] ?? 0,
+        sorted[Math.floor(n * 0.90)] ?? 0
       ];
 
       for (const thresh of thresholds) {
@@ -136,11 +138,11 @@ export function predictXGBoost(
   const trainZ = buildTabularData(historyZ, 1);
   const trainClock = buildTabularData(historyClock, 1);
 
-  // Tuned for 7-day (672 pts) → Day-8 (96 steps) – higher accuracy, lower gap vs ground truth
-  const modelX = trainBoostedRegressor(trainX.X, trainX.y, 48, 0.10);
-  const modelY = trainBoostedRegressor(trainY.X, trainY.y, 48, 0.10);
-  const modelZ = trainBoostedRegressor(trainZ.X, trainZ.y, 48, 0.10);
-  const modelClock = trainBoostedRegressor(trainClock.X, trainClock.y, 52, 0.08);
+  // Tuned for maximum Day-8 accuracy on 672-pt 7-day window — 7-quantile splits, high tree count
+  const modelX = trainBoostedRegressor(trainX.X, trainX.y, 80, 0.06);
+  const modelY = trainBoostedRegressor(trainY.X, trainY.y, 80, 0.06);
+  const modelZ = trainBoostedRegressor(trainZ.X, trainZ.y, 80, 0.06);
+  const modelClock = trainBoostedRegressor(trainClock.X, trainClock.y, 90, 0.05);
 
   // Autoregressive multi-step rollouts
   const simX = [...historyX];

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ForecastHorizon,
   ModelType,
@@ -25,11 +25,12 @@ export function App() {
   const [thresholds, setThresholds] = useState<RiskThresholds>(DEFAULT_RISK_THRESHOLDS);
   const [isThresholdModalOpen, setIsThresholdModalOpen] = useState(false);
   const [autoPlay, setAutoPlay] = useState(false);
-  const [autoPlayInterval, setAutoPlayInterval] = useState<ReturnType<typeof setInterval> | null>(null);
+  const autoPlayRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Custom uploaded dataset
   const [customDataset, setCustomDataset] = useState<ErrorDataPoint[] | null>(null);
   const [customDatasetName, setCustomDatasetName] = useState<string | null>(null);
+  const [resetTick, setResetTick] = useState(0); // force remount of graph on reset
 
   const satInfo = { id: 'SAT-01', name: 'SAT-01', orbitType: 'MEO (12h repeat)' as const, prn: 'PRN-01', slot: 'Plane A / Slot 2', description: 'Medium Earth Orbit satellite with semi-diurnal harmonic ephemeris variation and linear atomic clock drift.', clockType: 'Rubidium Atomic' as const, status: 'ACTIVE_MONITORING' as const };
 
@@ -116,45 +117,52 @@ export function App() {
 
   const handleAutoPlay = () => {
     if (customDataset) return;
-    setAutoPlay(prev => {
-      if (prev) {
-        if (autoPlayInterval) clearInterval(autoPlayInterval);
-        setAutoPlayInterval(null);
-        return false;
-      } else {
-        const maxIndex = SATELLITE_DATASETS['SAT-01'].length - 1 - 96;
-        const interval = setInterval(() => {
-          setCurrentIndex(p => {
-            if (p >= maxIndex) {
-              clearInterval(interval);
-              setAutoPlay(false);
-              setAutoPlayInterval(null);
-              return p;
-            }
-            return p + 1;
-          });
-        }, 700);
-        setAutoPlayInterval(interval);
-        return true;
-      }
-    });
+    if (autoPlay) {
+      if (autoPlayRef.current) clearInterval(autoPlayRef.current);
+      autoPlayRef.current = null;
+      setAutoPlay(false);
+    } else {
+      const maxIndex = SATELLITE_DATASETS['SAT-01'].length - 1 - 96;
+      const interval = setInterval(() => {
+        setCurrentIndex(p => {
+          if (p >= maxIndex) {
+            if (autoPlayRef.current) clearInterval(autoPlayRef.current);
+            autoPlayRef.current = null;
+            setAutoPlay(false);
+            return p;
+          }
+          return p + 1;
+        });
+      }, 700);
+      autoPlayRef.current = interval;
+      setAutoPlay(true);
+    }
   };
 
+  // Reset must be reliable even while autoPlay interval is running — clear ref, reset all states, clear custom data
   const handleReset = () => {
+    if (autoPlayRef.current) {
+      clearInterval(autoPlayRef.current);
+      autoPlayRef.current = null;
+    }
+    setAutoPlay(false);
     setCurrentIndex(671);
     setSelectedHorizon('24h');
-    setAutoPlay(false);
-    if (autoPlayInterval) clearInterval(autoPlayInterval);
-    setAutoPlayInterval(null);
+    // also clear custom dataset so we return to true SAT-01 7-day → Day8 forecast (fixes “reset not working” when custom data was loaded)
+    if (customDataset) {
+      setCustomDataset(null);
+      setCustomDatasetName(null);
+    }
+    setResetTick(t => t + 1); // forces graph to re-animate
+    // brief visual feedback could be added via toast — success banner already handled by customDataset clear
   };
 
   const handleCustomDatasetLoaded = (newDataset: ErrorDataPoint[], customName?: string) => {
     setCustomDataset(newDataset);
     if (customName) setCustomDatasetName(customName);
     setCurrentIndex(671);
+    if (autoPlayRef.current) { clearInterval(autoPlayRef.current); autoPlayRef.current = null; }
     setAutoPlay(false);
-    if (autoPlayInterval) clearInterval(autoPlayInterval);
-    setAutoPlayInterval(null);
     setActiveTab('dashboard');
   };
 
@@ -162,10 +170,15 @@ export function App() {
     setCustomDataset(null);
     setCustomDatasetName(null);
     setCurrentIndex(671);
+    if (autoPlayRef.current) { clearInterval(autoPlayRef.current); autoPlayRef.current = null; }
     setAutoPlay(false);
-    if (autoPlayInterval) clearInterval(autoPlayInterval);
-    setAutoPlayInterval(null);
+    setResetTick(t => t + 1);
   };
+
+  // cleanup on unmount
+  useEffect(() => {
+    return () => { if (autoPlayRef.current) clearInterval(autoPlayRef.current); };
+  }, []);
 
   const historicalLabel = useMemo(() => {
     if (customDataset) return `Custom Dataset — ${customDatasetName} (${customDataset.length} pts)`;
@@ -354,7 +367,7 @@ export function App() {
             </div>
 
             {/* Clock Error Graph Section */}
-            <div className="bg-slate-900/50 border border-slate-700 rounded-xl p-6">
+            <div key={`graph-${resetTick}-${currentIndex}-${selectedHorizon}`} className="bg-slate-900/50 border border-slate-700 rounded-xl p-6">
               <h2 className="text-sm font-semibold text-white uppercase tracking-wider mb-3">CLOCK ERROR — Historical | Forecast | Ground Truth <span className="text-slate-500 font-normal normal-case"> (NOW marker)</span></h2>
               <MainForecastGraph
                 historicalData={historicalData}
