@@ -136,10 +136,11 @@ export function predictXGBoost(
   const trainZ = buildTabularData(historyZ, 1);
   const trainClock = buildTabularData(historyClock, 1);
 
-  const modelX = trainBoostedRegressor(trainX.X, trainX.y, 24, 0.18);
-  const modelY = trainBoostedRegressor(trainY.X, trainY.y, 24, 0.18);
-  const modelZ = trainBoostedRegressor(trainZ.X, trainZ.y, 24, 0.18);
-  const modelClock = trainBoostedRegressor(trainClock.X, trainClock.y, 28, 0.16);
+  // Tuned for 7-day (672 pts) → Day-8 (96 steps) – higher accuracy, lower gap vs ground truth
+  const modelX = trainBoostedRegressor(trainX.X, trainX.y, 48, 0.10);
+  const modelY = trainBoostedRegressor(trainY.X, trainY.y, 48, 0.10);
+  const modelZ = trainBoostedRegressor(trainZ.X, trainZ.y, 48, 0.10);
+  const modelClock = trainBoostedRegressor(trainClock.X, trainClock.y, 52, 0.08);
 
   // Autoregressive multi-step rollouts
   const simX = [...historyX];

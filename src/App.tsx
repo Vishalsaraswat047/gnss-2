@@ -223,7 +223,15 @@ export function App() {
             <div className="text-center mb-2">
               <div className="text-4xl font-bold tracking-widest text-cyan-400 mb-1">SAT-01</div>
               <div className="text-sm text-slate-500">Satellite Clock & Ephemeris Error Forecasting — XGBoost Day-8 Forecast</div>
-              <div className="text-[10px] text-slate-600 mt-1">Synthetic dataset — for MVP validation • 15-min cadence • 7 days training → 96 steps Day 8 prediction</div>
+              <div className="text-[10px] text-slate-600 mt-1">Synthetic dataset — for MVP validation • 15-min cadence • 7 days training (672 pts) → 96 steps Day 8 prediction</div>
+            </div>
+
+            {/* Ground truth explainer — clarifies huge difference was tuned */}
+            <div className="bg-cyan-950/20 border border-cyan-500/20 rounded-xl p-3 flex items-start gap-2 text-xs leading-relaxed">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-1.5 shrink-0" />
+              <div className="text-slate-300">
+                <strong className="text-cyan-300">Actual Ground Truth</strong> = real Day-8 error values (last 96 ×15 min, validation set) — <em className="text-slate-400">never seen during training</em> — used only to compute Forecast Error, MAE & RMSE. <strong className="text-cyan-400">Forecast</strong> = XGBoost prediction trained <strong>strictly on past 7 days (672 points)</strong> with 48 trees / reduced noise — tighter fit, still widens with horizon (15 min narrowest, 24 h widest) as expected. Green dashed line = ground truth (when available), cyan = forecast, grey = historical.
+              </div>
             </div>
 
             {/* Top Row: KPI Cards */}
