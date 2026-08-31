@@ -323,7 +323,7 @@ export function App() {
                     <button onClick={() => setIsThresholdModalOpen(true)} className="text-[10px] text-slate-400 hover:text-cyan-400 underline">Thresholds</button>
                   </div>
                   <div className="flex items-center gap-3 mt-1.5">
-                    <div className={`px-3 py-1 rounded font-bold text-sm uppercase tracking-wider border ${forecastResult.risk.level === 'HIGH' ? 'bg-amber-500/10 border-amber-500/40 text-amber-400' : forecastResult.risk.level === 'MEDIUM' ? 'bg-amber-500/10 border-amber-500/40 text-amber-400' : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'}`}>
+                    <div className={`px-3 py-1 rounded font-bold text-sm uppercase tracking-wider border ${forecastResult.risk.level === 'CRITICAL' ? 'bg-red-500/15 border-red-500/50 text-red-400' : forecastResult.risk.level === 'HIGH' ? 'bg-amber-500/10 border-amber-500/40 text-amber-400' : forecastResult.risk.level === 'MEDIUM' ? 'bg-amber-500/10 border-amber-500/40 text-amber-400' : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'}`}>
                       {forecastResult.risk.level}
                     </div>
                     <span className="text-[11px] font-mono text-slate-400">Score {forecastResult.risk.score}/100</span>

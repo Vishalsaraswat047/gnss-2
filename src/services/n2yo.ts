@@ -98,6 +98,9 @@ export function getAbove(observerLat: number, observerLng: number, observerAlt: 
 
 // ——— Synthetic Live Generator (fallback when N2YO fails or for dashboard SAT-01) ———
 // Per-satellite realistic orbit: ISS LEO 92min, Starlink 95min, Hubble 95min, GPS MEO 12h, GOES GEO 24h, NOAA polar 101min
+// VISUAL FIX: satellite was not visibly moving on whole-world map because per-second
+// ground-track delta was ~0.06° (LEO) / 0.02° (MEO) = sub-pixel. Scale time by
+// visualFactor so live dot clearly traverses the map and trail is obvious.
 export function generateSyntheticPositions(
   observerLat: number,
   observerLng: number,
@@ -118,12 +121,14 @@ export function generateSyntheticPositions(
   else { orbitPeriodSec = 12*3600; baseAlt = 20200; inclDeg = 55; } // SAT-01 MEO default
   const baseT = now % orbitPeriodSec;
   const incl = inclDeg * Math.PI / 180;
+  // visual time compression so motion is obvious on global equirectangular map
+  const visualFactor = satId === 41866 ? 0 : satId === 25544 || satId === 20580 || satId === 43013 || satId === 33591 ? 45 : 60;
   const positions: Position[] = [];
   for (let i = 0; i < seconds; i++) {
-    const t = baseT + i;
+    const t = baseT + i * (visualFactor || 1);
     const theta = (2 * Math.PI * t) / orbitPeriodSec;
     const lat = Math.asin(Math.sin(incl) * Math.sin(theta)) * 180 / Math.PI;
-    // longitude drift visible: GEO stays, LEO fast, MEO medium
+    // longitude drift visible: GEO stays, LEO fast, MEO medium (scaled by visualFactor via t)
     const lonSpeed = satId===41866 ? 0 : satId===25544 || satId===20580 || satId===43013 || satId===33591 ? 0.06 : 0.02; // deg/sec
     const lon0 = satId===1 ? -75 : -30;
     const lon = (((lon0 + t * lonSpeed) % 360 + 540) % 360) - 180;

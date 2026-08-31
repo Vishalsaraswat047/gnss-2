@@ -21,13 +21,13 @@ export interface ErrorDataPoint {
   };
 }
 
-export type ModelType = 'xgboost';
+export type ModelType = 'xgboost' | 'persistence' | 'lstm' | 'transformer';
 
 export type ForecastHorizon = '15m' | '30m' | '1h' | '2h' | '6h' | '24h';
 
 export type TrendType = 'STABLE' | 'INCREASING' | 'DECREASING' | 'RAPIDLY_INCREASING' | 'OSCILLATING';
 
-export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface SatelliteInfo {
   id: string;

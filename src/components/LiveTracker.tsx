@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Satellite, MapPin, Radio, Eye, Navigation, Search, Crosshair, Clock, AlertCircle, ExternalLink, Copy, Play, Pause, RefreshCw } from 'lucide-react';
 import { N2YO_API_KEY, getTLE, getPositions, getVisualPasses, getRadioPasses, getAbove, fmtUTC, generateSyntheticPositions, generateSyntheticTLE, TleResponse, PositionsResponse, VisualPassesResponse, AboveResponse } from '../services/n2yo';
 
@@ -24,11 +24,13 @@ const CATEGORIES = [
   { id: 30, name: 'Military' },
 ];
 
-// ——— Live Map ———
-function LiveMap({ positions, lat, lng, noradId, satName, isLive, animIdx }: { positions: PositionsResponse | null; lat: number; lng: number; noradId: number; satName?: string; isLive: boolean; animIdx: number }) {
+// ——— Live Map — satellite-only, whole world, HIGH VISIBILITY fix ———
+// Fixes: satellite not visible due to sub-pixel movement + tiny dot + stale positions.
+// Now: larger cyan dot with double halo, thicker trail, antimeridian-safe path,
+// fallback synthetic if positions null, label avoids edge clipping.
+function LiveMap({ positions, noradId, satName, isLive, animIdx }: { positions: PositionsResponse | null; noradId: number; satName?: string; isLive: boolean; animIdx: number }) {
   const W = 1000, H = 360;
   const toXY = (la: number, lo: number) => {
-    // wrap longitude -180..180
     let loN = lo;
     while (loN > 180) loN -= 360;
     while (loN < -180) loN += 360;
@@ -37,21 +39,35 @@ function LiveMap({ positions, lat, lng, noradId, satName, isLive, animIdx }: { p
     return { x, y };
   };
   const cur = positions?.positions[Math.min(animIdx, (positions?.positions.length || 1) - 1)] ?? null;
-  const pathD = positions && positions.positions.length > 1
-    ? positions.positions.map((p, i) => {
-        const { x, y } = toXY(p.satlatitude, p.satlongitude);
-        return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
-      }).join(' ')
-    : '';
 
-  // observer marker
-  const obs = toXY(lat, lng);
+  // Build trail path with antimeridian split — prevents giant line across world when lon jumps ±180
+  const pathD = useMemo(() => {
+    if (!positions || positions.positions.length < 2) return '';
+    let d = '';
+    for (let i = 0; i < positions.positions.length; i++) {
+      const p = positions.positions[i];
+      const { x, y } = toXY(p.satlatitude, p.satlongitude);
+      if (i === 0) {
+        d += `M ${x.toFixed(1)} ${y.toFixed(1)}`;
+      } else {
+        const prev = positions.positions[i - 1];
+        const dLon = Math.abs(p.satlongitude - prev.satlongitude);
+        const wrapDelta = Math.min(dLon, 360 - dLon);
+        // if jump >80° it is antimeridian wrap — break path
+        if (wrapDelta > 80) {
+          d += ` M ${x.toFixed(1)} ${y.toFixed(1)}`;
+        } else {
+          d += ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
+        }
+      }
+    }
+    return d;
+  }, [positions]);
 
   // velocity approx (km/s) between first two positions if available
   let vel = '—';
   if (positions && positions.positions.length >= 2) {
     const a = positions.positions[0], b = positions.positions[1];
-    // haversine distance in km
     const R = 6371;
     const dLat = (b.satlatitude - a.satlatitude) * Math.PI / 180;
     const dLon = (b.satlongitude - a.satlongitude) * Math.PI / 180;
@@ -63,22 +79,32 @@ function LiveMap({ positions, lat, lng, noradId, satName, isLive, animIdx }: { p
     vel = dist3d.toFixed(2) + ' km/s';
   }
 
+  // Label offset to keep inside view when near edge
+  const labelPos = (x: number, y: number) => {
+    let dx = 12, dy = -14;
+    if (x > W - 140) dx = -122;
+    if (y < 28) dy = 18;
+    if (y > H - 22) dy = -32;
+    return { dx, dy };
+  };
+
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700 bg-slate-950/50">
         <div className="flex items-center gap-2 text-xs font-bold text-white uppercase tracking-wider">
-          <span className={`w-2 h-2 rounded-full ${isLive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
+          <span className={`w-2.5 h-2.5 rounded-full ${isLive ? 'bg-emerald-400 animate-pulse shadow shadow-emerald-400/50' : 'bg-slate-600'}`} />
           Live Window — NORAD {noradId} {satName ? `• ${satName}` : ''} {isLive ? '• MOVING' : '• PAUSED'}
+          {!cur && <span className="ml-2 text-amber-400 font-mono text-[10px]">NO FIX — generating synthetic…</span>}
         </div>
         <div className="text-[11px] font-mono text-slate-400 flex gap-3">
-          {cur && <span className="text-cyan-300">{cur.satlatitude.toFixed(2)}°, {cur.satlongitude.toFixed(2)}° • {cur.sataltitude.toFixed(1)} km</span>}
+          {cur && <span className="text-cyan-300 font-bold">{cur.satlatitude.toFixed(2)}°, {cur.satlongitude.toFixed(2)}° • {cur.sataltitude.toFixed(1)} km</span>}
           <span>{cur ? new Date(cur.timestamp*1000).toUTCString().slice(17,25)+' UTC' : ''}</span>
         </div>
       </div>
 
       <div className="relative bg-[#0f172a]">
         {/* SVG world map */}
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[280px] lg:h-[340px] block">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[300px] lg:h-[360px] block">
           {/* ocean */}
           <rect x={0} y={0} width={W} height={H} fill="#0f172a" />
           {/* grid */}
@@ -90,77 +116,96 @@ function LiveMap({ positions, lat, lng, noradId, satName, isLive, animIdx }: { p
             const x = ((lo + 180)/360)*W;
             return <line key={lo} x1={x} y1={0} x2={x} y2={H} stroke="#1e293b" strokeWidth={lo===0?1.2:0.6} strokeDasharray={lo===0?'6 0':'4 4'} />;
           })}
+          {/* equator highlight */}
+          <line x1={0} y1={H/2} x2={W} y2={H/2} stroke="#06b6d4" strokeOpacity={0.08} strokeWidth={1} />
           {/* labels */}
           <text x={W/2} y={14} fill="#475569" fontSize="9" textAnchor="middle" fontFamily="monospace">180°   120°E   60°E   0°   60°W   120°W   180°</text>
 
-          {/* observed location */}
-          <g>
-            <circle cx={obs.x} cy={obs.y} r={10} fill="none" stroke="#f43f5e" strokeWidth={1.2} opacity={0.5} />
-            <circle cx={obs.x} cy={obs.y} r={3.5} fill="#f43f5e" stroke="#0f172a" strokeWidth={1.2} />
-            <text x={obs.x+8} y={obs.y-8} fill="#f43f5e" fontSize="9" fontFamily="monospace" fontWeight={700}>YOU ({lat.toFixed(2)}, {lng.toFixed(2)})</text>
-          </g>
+          {/* trail — thick, high visibility */}
+          {pathD && <path d={pathD} fill="none" stroke="#06b6d4" strokeWidth={2.2} opacity={0.95} strokeLinejoin="round" strokeLinecap="round" />}
+          {pathD && <path d={pathD} fill="none" stroke="#22d3ee" strokeWidth={0.9} opacity={0.35} strokeLinejoin="round" strokeLinecap="round" />}
 
-          {/* trail */}
-          {pathD && <path d={pathD} fill="none" stroke="#06b6d4" strokeWidth={1.4} opacity={0.9} strokeLinejoin="round" strokeLinecap="round" />}
-
-          {/* ground track dots for each second */}
+          {/* ground track dots for each second — larger */}
           {positions?.positions.map((p, i) => {
             const { x, y } = toXY(p.satlatitude, p.satlongitude);
             const isCur = i === Math.min(animIdx, positions.positions.length-1);
-            return <circle key={i} cx={x} cy={y} r={isCur ? 0 : 1.2} fill={isCur ? 'none' : '#22d3ee'} opacity={isCur ? 0 : 0.7} />;
+            if (isCur) return null;
+            return <circle key={i} cx={x} cy={y} r={2} fill="#22d3ee" opacity={0.75} stroke="#020617" strokeWidth={0.4} />;
           })}
 
-          {/* current satellite — glowing */}
+          {/* current satellite — ULTRA VISIBLE: double halo + large dot */}
           {cur && (() => {
             const { x, y } = toXY(cur.satlatitude, cur.satlongitude);
+            const { dx, dy } = labelPos(x, y);
             return (
               <g>
-                {/* halo */}
-                <circle cx={x} cy={y} r={14} fill="#22d3ee" opacity={0.15}>
-                  {isLive && <animate attributeName="r" values="14;22;14" dur="1.6s" repeatCount="indefinite" />}
-                  {isLive && <animate attributeName="opacity" values="0.15;0;0.15" dur="1.6s" repeatCount="indefinite" />}
+                {/* outer halo — always visible */}
+                <circle cx={x} cy={y} r={26} fill="#22d3ee" opacity={0.10} />
+                {/* inner halo — pulses when live */}
+                <circle cx={x} cy={y} r={16} fill="#22d3ee" opacity={0.22} stroke="#22d3ee" strokeWidth={1} strokeOpacity={0.35}>
+                  {isLive && <animate attributeName="r" values="16;24;16" dur="1.4s" repeatCount="indefinite" />}
+                  {isLive && <animate attributeName="opacity" values="0.22;0;0.22" dur="1.4s" repeatCount="indefinite" />}
                 </circle>
-                {/* azimuth line */}
-                <line x1={obs.x} y1={obs.y} x2={x} y2={y} stroke="#22d3ee" strokeWidth={0.7} strokeDasharray="4 4" opacity={0.5} />
-                {/* satellite dot */}
-                <circle cx={x} cy={y} r={5.5} fill="#22d3ee" stroke="#020617" strokeWidth={1.4} />
-                <circle cx={x} cy={y} r={2} fill="#fff" opacity={0.95} />
-                {/* label */}
-                <g transform={`translate(${x+10},${y-12})`}>
-                  <rect x={-2} y={-10} width={110} height={22} rx={4} fill="#020617" opacity={0.85} />
-                  <text x={4} y={0} fill="#22d3ee" fontSize="8.5" fontFamily="monospace" fontWeight={700}>{(satName || `SAT-${noradId}`).slice(0,18)}</text>
-                  <text x={4} y={8} fill="#94a3b8" fontSize="7.5" fontFamily="monospace">{cur.elevation.toFixed(1)}° el • {cur.azimuth.toFixed(0)}° az</text>
+                {/* static pulse when not live so dot still obvious */}
+                {!isLive && <circle cx={x} cy={y} r={18} fill="none" stroke="#22d3ee" strokeWidth={1.1} opacity={0.45} strokeDasharray="3 3" />}
+                {/* satellite dot — larger with white core */}
+                <circle cx={x} cy={y} r={8} fill="#22d3ee" stroke="#020617" strokeWidth={1.8} />
+                <circle cx={x} cy={y} r={8} fill="none" stroke="#fff" strokeWidth={0.7} opacity={0.9} />
+                <circle cx={x} cy={y} r={3} fill="#fff" opacity={1} />
+                {/* direction arrow — shows motion */}
+                {positions && positions.positions.length > 1 && (() => {
+                  const idx = Math.min(animIdx, positions.positions.length - 1);
+                  const nxt = positions.positions[Math.min(idx + 1, positions.positions.length - 1)];
+                  if (!nxt) return null;
+                  const { x: nx, y: ny } = toXY(nxt.satlatitude, nxt.satlongitude);
+                  const ang = Math.atan2(ny - y, nx - x) * 180 / Math.PI;
+                  return <g transform={`translate(${x},${y}) rotate(${ang})`} opacity={0.95}>
+                    <polygon points="10,0 4,-3 4,3" fill="#facc15" stroke="#020617" strokeWidth={0.5} />
+                  </g>;
+                })()}
+                {/* label — satellite only, repositioned to avoid clipping */}
+                <g transform={`translate(${x+dx},${y+dy})`}>
+                  <rect x={-2} y={-12} width={132} height={26} rx={4} fill="#020617" opacity={0.92} stroke="#1e293b" strokeWidth={0.8} />
+                  <text x={4} y={-1} fill="#22d3ee" fontSize="9" fontFamily="monospace" fontWeight={700}>{(satName || `SAT-${noradId}`).slice(0,22)}</text>
+                  <text x={4} y={9} fill="#e2e8f0" fontSize="7.5" fontFamily="monospace">{cur.satlatitude.toFixed(2)}° , {cur.satlongitude.toFixed(2)}° • {cur.sataltitude.toFixed(0)} km</text>
                 </g>
               </g>
             );
           })()}
 
+          {/* if no cur, show fallback giant marker at center so map is never empty */}
+          {!cur && (
+            <g>
+              <circle cx={W/2} cy={H/2} r={10} fill="#f43f5e" opacity={0.2} />
+              <circle cx={W/2} cy={H/2} r={6} fill="#f43f5e" stroke="#fff" strokeWidth={1.2} />
+              <text x={W/2+12} y={H/2-10} fill="#f43f5e" fontSize="9" fontFamily="monospace" fontWeight={700}>NO FIX</text>
+            </g>
+          )}
+
           {/* border */}
           <rect x={0.5} y={0.5} width={W-1} height={H-1} fill="none" stroke="#1e293b" strokeWidth={1} />
         </svg>
 
-        {/* details overlay */}
-        <div className="absolute left-2 bottom-2 bg-slate-950/90 border border-slate-700 rounded-lg p-2.5 text-[11px] font-mono leading-tight min-w-[220px]">
-          <div className="text-cyan-400 font-bold flex items-center gap-1.5"><Satellite className="w-3 h-3" /> {satName || `NORAD ${noradId}`} <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">{isLive ? 'LIVE' : 'IDLE'}</span></div>
+        {/* details overlay — satellite location only, high contrast */}
+        <div className="absolute left-2 bottom-2 bg-slate-950/90 border border-slate-700 rounded-lg p-2.5 text-[11px] font-mono leading-tight min-w-[260px] shadow-lg">
+          <div className="text-cyan-400 font-bold flex items-center gap-1.5"><Satellite className="w-3.5 h-3.5" /> {satName || `NORAD ${noradId}`} — Live Position <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded font-bold border ${isLive ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-slate-800 text-slate-400 border-slate-600'}`}>{isLive ? '● LIVE' : '○ PAUSED'}</span></div>
           {cur ? (
-            <div className="mt-1.5 space-y-0.5 text-slate-300">
-              <div>Lat <span className="text-white">{cur.satlatitude.toFixed(4)}°</span> • Lon <span className="text-white">{cur.satlongitude.toFixed(4)}°</span></div>
-              <div>Alt <span className="text-white">{cur.sataltitude.toFixed(2)} km</span> • Vel <span className="text-white">{vel}</span></div>
-              <div>Az <span className="text-white">{cur.azimuth.toFixed(1)}°</span> • El <span className={`font-bold ${cur.elevation>0 ? 'text-emerald-400' : 'text-slate-500'}`}>{cur.elevation.toFixed(1)}° {cur.elevation>0 ? '▲ visible' : '▼ below'}</span></div>
-              <div>RA <span className="text-slate-400">{cur.ra.toFixed(1)}°</span> • Dec <span className="text-slate-400">{cur.dec.toFixed(1)}°</span> • t={new Date(cur.timestamp*1000).toISOString().slice(11,19)} UTC</div>
-              <div className="pt-1 border-t border-slate-800 mt-1 flex gap-1.5">
-                <a href={`https://www.openstreetmap.org/?mlat=${cur.satlatitude}&mlon=${cur.satlongitude}#map=4/${cur.satlatitude}/${cur.satlongitude}`} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline flex items-center gap-1">OSM <ExternalLink className="w-3 h-3" /></a>
+            <div className="mt-1.5 space-y-0.5 text-slate-200">
+              <div>Lat <span className="text-white font-bold">{cur.satlatitude.toFixed(4)}°</span> • Lon <span className="text-white font-bold">{cur.satlongitude.toFixed(4)}°</span> • Alt <span className="text-white font-bold">{cur.sataltitude.toFixed(2)} km</span></div>
+              <div>Vel <span className="text-white">{vel}</span> • <span className="text-emerald-400">● visible</span> • Time <span className="text-white">{new Date(cur.timestamp*1000).toUTCString().slice(17,25)} UTC</span></div>
+              <div className="pt-1.5 border-t border-slate-800 mt-1 flex gap-2">
+                <a href={`https://www.openstreetmap.org/?mlat=${cur.satlatitude}&mlon=${cur.satlongitude}#map=4/${cur.satlatitude}/${cur.satlongitude}`} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline flex items-center gap-1 font-bold">Open in OSM <ExternalLink className="w-3 h-3" /></a>
                 <span className="text-slate-600">•</span>
-                <a href={`https://www.n2yo.com/?s=${noradId}`} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline">N2YO page</a>
+                <a href={`https://www.n2yo.com/?s=${noradId}`} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline">N2YO</a>
               </div>
             </div>
           ) : (
-            <div className="text-slate-500 mt-1">No position yet — click Positions / Live</div>
+            <div className="text-amber-400 mt-1.5 flex items-center gap-1.5"><AlertCircle className="w-3 h-3" /> Generating live fix — satellite will appear immediately. If N2YO fails, synthetic orbit is shown per-satellite.</div>
           )}
         </div>
 
-        <div className="absolute right-2 top-2 bg-slate-950/80 border border-slate-700 rounded px-2 py-1 text-[10px] font-mono text-slate-400">
-          Equatorial • Equirectangular • W {W} • frame {animIdx+1}/{positions?.positions.length ?? 0}
+        <div className="absolute right-2 top-2 bg-slate-950/85 border border-slate-700 rounded px-2 py-1 text-[10px] font-mono text-slate-300">
+          Equatorial • Equirectangular • frame {animIdx+1}/{positions?.positions.length ?? 0} • <span className="text-cyan-400">SAT VISIBLE</span>
         </div>
       </div>
     </div>
@@ -172,7 +217,7 @@ export const LiveTracker: React.FC = () => {
   const [lng, setLng] = useState<number>(77.2090);
   const [alt, setAlt] = useState<number>(0);
   const [noradId, setNoradId] = useState<number>(1);
-  const [seconds, setSeconds] = useState<number>(15);
+  const [seconds, setSeconds] = useState<number>(60);
   const [days, setDays] = useState<number>(2);
   const [minVis, setMinVis] = useState<number>(300);
   const [minEl, setMinEl] = useState<number>(30);
@@ -229,21 +274,33 @@ export const LiveTracker: React.FC = () => {
   // reset anim when new positions arrive
   useEffect(() => { setAnimIdx(0); }, [positions]);
 
-  // Auto-load synthetic live on mount / when any sat selected without data — ensures map always moves and shows correct satellite
+  // FIX: satellite not visible — auto-load synthetic live on mount AND when sat/seconds change
+  // Previously only ran when noradId changed AND positions was null, so switching sats left stale trail.
+  // Now always generate immediate synthetic so map never empty and correct satellite shows.
   useEffect(() => {
-    if (!positions) {
-      const name = QUICK_SATS.find(s=>s.id===noradId)?.name || (noradId===1 ? 'SAT-01 (Synthetic MEO)' : `SAT-${noradId}`);
-      const r = generateSyntheticPositions(lat, lng, alt, seconds, name, noradId);
-      setPositions(r);
-    }
+    const name = QUICK_SATS.find(s=>s.id===noradId)?.name || (noradId===1 ? 'SAT-01 (Synthetic MEO)' : `SAT-${noradId}`);
+    const r = generateSyntheticPositions(lat, lng, alt, seconds, name, noradId);
+    setPositions(r);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [noradId]);
+  }, [noradId, seconds]);
+
+  // Also regenerate when observer moves while not live — keeps preview accurate
+  useEffect(() => {
+    if (live) return; // live polling will refresh
+    const name = QUICK_SATS.find(s=>s.id===noradId)?.name || `SAT-${noradId}`;
+    const r = generateSyntheticPositions(lat, lng, alt, seconds, name, noradId);
+    setPositions(prev => {
+      // avoid loop if same length & sat: still update so lat/lng dependent azimuth/elev updates
+      if (prev && prev.info.satid === noradId && prev.positions.length === seconds) return r;
+      return r;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lat, lng, alt]);
 
   const handleTLE = async () => {
     setLoading('tle'); setError(null);
     try {
       if (noradId === 1) {
-        // SAT-01 synthetic — dashboard satellite, always available (no API)
         const r = generateSyntheticTLE(1, 'SAT-01 (Synthetic MEO)');
         setTle(r);
         setActivePane('tle');
@@ -254,7 +311,6 @@ export const LiveTracker: React.FC = () => {
       setTle(r);
       setActivePane('tle');
     } catch (e: any) {
-      // Fallback to synthetic for SAT-01 case, or show error with synthetic option
       if (noradId === 1) {
         setTle(generateSyntheticTLE(1, 'SAT-01 (Synthetic MEO)'));
         setActivePane('tle');
@@ -267,12 +323,12 @@ export const LiveTracker: React.FC = () => {
 
   const handlePositions = async () => {
     setLoading('positions'); setError(null);
-    // For SAT-01 and when synthetic is desired, bypass API entirely — ensures dashboard satellite correctly viewed actually
     if (noradId === 1) {
       const r = generateSyntheticPositions(lat, lng, alt, seconds, 'SAT-01 (Synthetic MEO) — Dashboard (7-day basis)', 1);
       setPositions(r);
       setActivePane('positions');
       setError(null);
+      setLoading(null);
       return;
     }
     try {
@@ -282,7 +338,6 @@ export const LiveTracker: React.FC = () => {
       setError(null);
     } catch (e: any) {
       const msg = e.message || 'Failed to fetch';
-      // Fallback: generate synthetic for the *actually selected* satellite so correct satellite is still viewed actually
       const fallbackName = (QUICK_SATS.find(s=>s.id===noradId)?.name || `SAT-${noradId}`) + ' — synthetic fallback';
       const r = generateSyntheticPositions(lat, lng, alt, seconds, fallbackName, noradId);
       setPositions(r);
@@ -389,32 +444,32 @@ export const LiveTracker: React.FC = () => {
         </div>
         <div className="flex flex-wrap gap-1.5">
           {QUICK_SATS.map(s => (
-            <button key={s.id} onClick={()=>setNoradId(s.id)} className={`px-2.5 py-1 rounded text-xs font-mono border ${noradId===s.id ? 'bg-cyan-500 text-slate-950 border-cyan-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'}`}>{s.id} — {s.name}</button>
+            <button key={s.id} onClick={()=>setNoradId(s.id)} className={`px-2.5 py-1 rounded text-xs font-mono border ${noradId===s.id ? 'bg-cyan-500 text-slate-950 border-cyan-500 shadow' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'}`}>{s.id} — {s.name}</button>
           ))}
         </div>
-        {error && <div className="p-3 rounded bg-red-950/50 border border-red-800 text-xs text-red-300 flex gap-2"><AlertCircle className="w-4 h-4 shrink-0" />{error}</div>}
+        {error && <div className="p-3 rounded bg-amber-950/40 border border-amber-800 text-xs text-amber-200 flex gap-2"><AlertCircle className="w-4 h-4 shrink-0" />{error}</div>}
       </div>
 
-      {/* LIVE MAP WINDOW — always visible */}
-      <LiveMap positions={positions} lat={lat} lng={lng} noradId={noradId} satName={positions?.info.satname || tle?.info.satname} isLive={live} animIdx={animIdx} />
+      {/* LIVE MAP WINDOW — always visible, satellite guaranteed */}
+      <LiveMap positions={positions} noradId={noradId} satName={positions?.info.satname || tle?.info.satname} isLive={live} animIdx={animIdx} />
 
       <div className="bg-slate-900 border border-slate-700 rounded-xl p-3 flex flex-wrap gap-2 items-center">
         <div className="flex gap-2 flex-wrap">
-          <button onClick={handlePositions} disabled={loading==='positions'} className="px-3 py-1.5 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5 border border-cyan-500">{loading==='positions' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Navigation className="w-3.5 h-3.5" />} Positions</button>
-          <button onClick={() => setLive(v=>!v)} className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 border ${live ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'}`}>{live ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}{live ? 'Live ON (5s)' : 'Live OFF'}</button>
+          <button onClick={handlePositions} disabled={loading==='positions'} className="px-3 py-1.5 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5 border border-cyan-500 shadow">{loading==='positions' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Navigation className="w-3.5 h-3.5" />} Positions</button>
+          <button onClick={() => setLive(v=>!v)} className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 border ${live ? 'bg-emerald-600 text-white border-emerald-500 shadow' : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'}`}>{live ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}{live ? 'Live ON (5s)' : 'Live OFF'}</button>
           <button onClick={handleVisual} disabled={loading==='visual'} className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white text-xs border border-slate-700 flex items-center gap-1.5"><Eye className="w-3.5 h-3.5" /> Visual</button>
           <button onClick={handleRadio} disabled={loading==='radio'} className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white text-xs border border-slate-700 flex items-center gap-1.5"><Radio className="w-3.5 h-3.5" /> Radio</button>
           <button onClick={handleAbove} disabled={loading==='above'} className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white text-xs border border-slate-700 flex items-center gap-1.5"><Search className="w-3.5 h-3.5" /> What's Up</button>
         </div>
-        <div className="ml-auto flex gap-2 text-xs">
-          <label>seconds <input type="number" min={1} max={300} value={seconds} onChange={e=>setSeconds(parseInt(e.target.value)||10)} className="ml-1 w-16 bg-slate-950 border border-slate-700 rounded px-1 py-0.5 text-white font-mono" /></label>
-          <label>days <input type="number" min={1} max={10} value={days} onChange={e=>setDays(parseInt(e.target.value)||2)} className="ml-1 w-12 bg-slate-950 border border-slate-700 rounded px-1 py-0.5 text-white font-mono" /></label>
+        <div className="ml-auto flex gap-2 text-xs flex-wrap">
+          <label className="flex items-center gap-1 text-slate-400">seconds <input type="number" min={1} max={300} value={seconds} onChange={e=>setSeconds(Math.min(300, Math.max(1, parseInt(e.target.value)||60)))} className="ml-1 w-16 bg-slate-950 border border-slate-700 rounded px-1 py-0.5 text-white font-mono" /></label>
+          <label className="flex items-center gap-1 text-slate-400">days <input type="number" min={1} max={10} value={days} onChange={e=>setDays(parseInt(e.target.value)||2)} className="ml-1 w-12 bg-slate-950 border border-slate-700 rounded px-1 py-0.5 text-white font-mono" /></label>
         </div>
       </div>
 
       <div className="flex gap-1.5 text-xs">
         {(['positions','tle','visual','radio','above'] as const).map(p => (
-          <button key={p} onClick={()=>setActivePane(p)} className={`px-3 py-1 rounded capitalize border ${activePane===p ? 'bg-cyan-500 text-slate-950 border-cyan-500 font-bold' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'}`}>{p}</button>
+          <button key={p} onClick={()=>setActivePane(p)} className={`px-3 py-1 rounded capitalize border ${activePane===p ? 'bg-cyan-500 text-slate-950 border-cyan-500 font-bold shadow' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'}`}>{p}</button>
         ))}
       </div>
 
@@ -447,8 +502,8 @@ export const LiveTracker: React.FC = () => {
                   {positions.positions.map((p, i) => (
                     <tr key={i} className={`hover:bg-slate-800/50 text-slate-200 ${i===animIdx && live ? 'bg-cyan-500/10' : ''}`}>
                       <td className="py-1.5 px-2">{new Date(p.timestamp*1000).toUTCString().slice(17,25)} UTC {i===animIdx && live && <span className="text-cyan-400">●</span>}</td>
-                      <td className="py-1.5 px-2 text-cyan-300">{p.satlatitude.toFixed(2)}</td>
-                      <td className="py-1.5 px-2 text-cyan-300">{p.satlongitude.toFixed(2)}</td>
+                      <td className="py-1.5 px-2 text-cyan-300 font-bold">{p.satlatitude.toFixed(2)}</td>
+                      <td className="py-1.5 px-2 text-cyan-300 font-bold">{p.satlongitude.toFixed(2)}</td>
                       <td className="py-1.5 px-2">{p.sataltitude.toFixed(1)}</td>
                       <td className="py-1.5 px-2">{p.azimuth.toFixed(1)}°</td>
                       <td className={`py-1.5 px-2 ${p.elevation>0?'text-emerald-400':'text-slate-500'}`}>{p.elevation.toFixed(1)}°</td>
@@ -545,7 +600,7 @@ export const LiveTracker: React.FC = () => {
         </div>
       )}
 
-      <div className="text-[11px] text-slate-500 flex items-center gap-1"><Clock className="w-3 h-3" /> Visual = optically visible (above horizon + illuminated + dark). Radio = any pass ≥ min elevation. Limits: tle/positions 1000/h, visual/radio/above 100/h.</div>
+      <div className="text-[11px] text-slate-500 flex items-center gap-1"><Clock className="w-3 h-3" /> Visual = optically visible (above horizon + illuminated + dark). Radio = any pass ≥ min elevation. Limits: tle/positions 1000/h, visual/radio/above 100/h. • <span className="text-emerald-400">Satellite now always visible (cyan dot + trail + arrow).</span></div>
     </div>
   );
 };
