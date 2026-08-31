@@ -139,61 +139,112 @@ export function parseUploadedCSV(csvContent: string): { points: ErrorDataPoint[]
     throw new Error("CSV file must contain a header and at least one data row.");
   }
 
-  // Parse header
-  const header = lines[0].toLowerCase().split(/[,\t]/).map((h) => h.trim());
+  // Parse header - case-insensitive, handles Time, X_Error, Y_Error, Z_Error, Clock_Error
+  const header = lines[0].toLowerCase().split(/[,\t;]/).map((h) => h.trim().replace(/"/g,''));
   const timeIdx = header.findIndex((h) => h.includes('time') || h.includes('date') || h.includes('epoch'));
-  const xIdx = header.findIndex((h) => h.includes('x_err') || h.includes('xerror') || h === 'x');
-  const yIdx = header.findIndex((h) => h.includes('y_err') || h.includes('yerror') || h === 'y');
-  const zIdx = header.findIndex((h) => h.includes('z_err') || h.includes('zerror') || h === 'z');
+  const xIdx = header.findIndex((h) => h === 'x_error' || h === 'x_err' || h.includes('x_error') || h === 'x');
+  const yIdx = header.findIndex((h) => h === 'y_error' || h === 'y_err' || h.includes('y_error') || h === 'y');
+  const zIdx = header.findIndex((h) => h === 'z_error' || h === 'z_err' || h.includes('z_error') || h === 'z');
   const clockIdx = header.findIndex((h) => h.includes('clock') || h.includes('clk'));
 
   if (xIdx === -1 || yIdx === -1 || zIdx === -1 || clockIdx === -1) {
     throw new Error(
-      "CSV header must contain columns for Time, X_Error, Y_Error, Z_Error, and Clock_Error (comma or tab delimited)."
+      "CSV header must contain columns: Time, X_Error, Y_Error, Z_Error, Clock_Error (comma/tab delimited). Found: " + lines[0]
     );
   }
+  if (timeIdx === -1) {
+    throw new Error("CSV header must contain a Time column");
+  }
 
-  const points: ErrorDataPoint[] = [];
+  const rawPoints: { timeStr: string; timestamp: number; x: number; y: number; z: number; clock: number; lineIdx: number }[] = [];
+  const parseErrors: string[] = [];
 
   for (let i = 1; i < lines.length; i++) {
     const row = lines[i].trim();
     if (!row) continue;
-    const parts = row.split(/[,\t]/).map((s) => s.trim());
-    if (parts.length < 5) continue;
-
-    const timeStr = timeIdx !== -1 && parts[timeIdx] ? parts[timeIdx] : `2026-08-27 ${i}:00`;
-    const x = parseFloat(parts[xIdx]) || 0;
-    const y = parseFloat(parts[yIdx]) || 0;
-    const z = parseFloat(parts[zIdx]) || 0;
-    const clock = parseFloat(parts[clockIdx]) || 0;
-
-    let timestamp: number;
-    try {
-      timestamp = new Date(timeStr.replace(' ', 'T')).getTime();
-      if (isNaN(timestamp)) {
-        timestamp = new Date("2026-08-27T00:00:00Z").getTime() + (i - 1) * 15 * 60 * 1000;
-      }
-    } catch {
-      timestamp = new Date("2026-08-27T00:00:00Z").getTime() + (i - 1) * 15 * 60 * 1000;
+    const parts = row.split(/[,\t;]/).map((s) => s.trim().replace(/"/g,''));
+    if (parts.length < Math.max(xIdx, yIdx, zIdx, clockIdx, timeIdx) + 1) {
+      parseErrors.push(`Row ${i+1}: not enough columns`);
+      continue;
     }
 
-    const isValidation = i > 672; // default 7 day cutoff if 768 points
-    const magnitude3D = Math.round(Math.sqrt(x * x + y * y + z * z) * 10000) / 10000;
+    const timeStrRaw = parts[timeIdx] ? parts[timeIdx] : `2026-08-27 00:00:00`;
+    const timeStr = timeStrRaw.trim();
+    let timestamp = Date.parse(timeStr.replace(' ', 'T'));
+    // try alternative: if timeStr is like "2026-08-27 00:15:00" without T
+    if (isNaN(timestamp)) {
+      // try adding Z
+      timestamp = Date.parse(timeStr.replace(' ', 'T') + 'Z');
+    }
+    if (isNaN(timestamp)) {
+      // fallback to sequential 15-min steps, but flag warning
+      timestamp = new Date("2026-08-27T00:00:00Z").getTime() + rawPoints.length * 15 * 60 * 1000;
+      parseErrors.push(`Row ${i+1}: invalid timestamp "${timeStrRaw}" — using sequential 15-min step`);
+    }
 
-    points.push({
-      time: timeStr,
+    const xStr = parts[xIdx], yStr = parts[yIdx], zStr = parts[zIdx], cStr = parts[clockIdx];
+    const x = parseFloat(xStr);
+    const y = parseFloat(yStr);
+    const z = parseFloat(zStr);
+    const clock = parseFloat(cStr);
+    if ([x, y, z, clock].some(v => isNaN(v))) {
+      parseErrors.push(`Row ${i+1}: NaN detected (X=${xStr} Y=${yStr} Z=${zStr} Clock=${cStr})`);
+    }
+
+    rawPoints.push({
+      timeStr: timeStrRaw,
       timestamp,
-      xError: x,
-      yError: y,
-      zError: z,
-      clockError: clock,
-      magnitude3D,
-      isValidation
+      x: isNaN(x) ? 0 : x,
+      y: isNaN(y) ? 0 : y,
+      z: isNaN(z) ? 0 : z,
+      clock: isNaN(clock) ? 0 : clock,
+      lineIdx: i
     });
   }
 
+  if (rawPoints.length === 0) throw new Error("No valid data rows found after parsing");
+
+  // Sort chronologically
+  rawPoints.sort((a, b) => a.timestamp - b.timestamp);
+
+  // Detect missing values / gaps: check for 15-min cadence gaps > 20 min
+  for (let i = 1; i < rawPoints.length; i++) {
+    const gap = (rawPoints[i].timestamp - rawPoints[i-1].timestamp) / 60000;
+    if (gap > 20) {
+      parseErrors.push(`Gap detected between row ${rawPoints[i-1].lineIdx+1} and ${rawPoints[i].lineIdx+1}: ${gap.toFixed(1)} min (expected ~15 min)`);
+    }
+  }
+
+  // Build ErrorDataPoint[] sorted and with proper validation flags
+  const points: ErrorDataPoint[] = rawPoints.map((rp, idx) => {
+    const magnitude3D = Math.round(Math.sqrt(rp.x * rp.x + rp.y * rp.y + rp.z * rp.z) * 10000) / 10000;
+    // Chronological: first 672 → historical, rest → validation (Day 8)
+    const isValidation = idx >= 672;
+    // Format time string consistently if original was invalid
+    let timeFormatted = rp.timeStr;
+    try {
+      const d = new Date(rp.timestamp);
+      timeFormatted = formatDateTime(d);
+    } catch {}
+    return {
+      time: timeFormatted,
+      timestamp: rp.timestamp,
+      xError: Math.round(rp.x * 10000) / 10000,
+      yError: Math.round(rp.y * 10000) / 10000,
+      zError: Math.round(rp.z * 10000) / 10000,
+      clockError: Math.round(rp.clock * 10000) / 10000,
+      magnitude3D,
+      isValidation
+    };
+  });
+
   const adapter = new MockDataAdapter();
   const validation = adapter.validateData(points);
+  // append parse warnings
+  if (parseErrors.length > 0) {
+    validation.warnings = [...validation.warnings, ...parseErrors.slice(0, 5)];
+    if (parseErrors.length > 5) validation.warnings.push(`... and ${parseErrors.length - 5} more`);
+  }
 
   return { points, validation };
 }
@@ -204,12 +255,10 @@ export function generateSampleCSV(): string {
   if (dataset.length === 0) {
     throw new Error('No sample dataset available. Please upload a CSV file first.');
   }
-
   const header = 'Time,X_Error,Y_Error,Z_Error,Clock_Error';
-  const rows = dataset.slice(0, 100).map((d) =>
+  const rows = dataset.map((d) =>
     `${d.time},${d.xError},${d.yError},${d.zError},${d.clockError}`
   ).join('\n');
-
   return header + '\n' + rows;
 }
 
