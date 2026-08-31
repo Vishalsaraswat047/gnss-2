@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { ErrorDataPoint } from '../types/gnss';
-import { defaultDataAdapter, parseUploadedCSV, DataValidationResult, generateSampleCSV } from '../services/dataAdapter';
+import { defaultDataAdapter, parseUploadedCSV, parseXLSXBuffer, DataValidationResult, generateSampleCSV } from '../services/dataAdapter';
 import { Database, Upload, Download, CheckCircle2, AlertCircle, FileText, RefreshCw } from 'lucide-react';
 
 interface DataPipelineViewProps {
@@ -25,34 +25,48 @@ export const DataPipelineView: React.FC<DataPipelineViewProps> = ({
     setUploadError(null);
     setUploadSuccess(null);
 
-    const isCsv = file.name.toLowerCase().endsWith('.csv') || file.name.toLowerCase().endsWith('.txt');
-    const isXlsx = file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls');
+    const lower = file.name.toLowerCase();
+    const isCsv = lower.endsWith('.csv') || lower.endsWith('.txt');
+    const isXlsx = lower.endsWith('.xlsx') || lower.endsWith('.xls');
     if (!isCsv && !isXlsx) {
       setUploadError('Please upload a valid .csv, .txt or .xlsx file. Required columns: Time, X_Error, Y_Error, Z_Error, Clock_Error');
       return;
     }
 
-    // For xlsx, we instruct to export as CSV - simple path: read as text and try parse; if binary, show error with guidance
+    if (isXlsx) {
+      // XLSX/XLS — parse directly, no CSV conversion needed
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const buffer = e.target?.result as ArrayBuffer;
+          const { points, validation } = parseXLSXBuffer(buffer);
+          if (!validation.isValid) {
+            setUploadError(`XLSX validation failed: ${validation.errors.join(', ')}`);
+            return;
+          }
+          onDatasetLoaded(points, `Custom Upload: ${file.name}`);
+          setUploadSuccess(
+            `Successfully loaded XLSX ${points.length} observations (${validation.historicalPoints} historical + ${validation.validationPoints} validation points) — sorted chronologically, timestamps validated, missing values checked. Dataset is now active in forecasting engine.`
+          );
+        } catch (err: any) {
+          setUploadError(err.message || 'Failed to parse XLSX. Ensure header is Time, X_Error, Y_Error, Z_Error, Clock_Error');
+        }
+      };
+      reader.onerror = () => setUploadError('Failed to read XLSX file');
+      reader.readAsArrayBuffer(file);
+      return;
+    }
+
+    // CSV/TXT
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const text = e.target?.result as string;
-        // quick binary check - if contains many non-ASCII, likely xlsx binary
-        if (isXlsx && text.charCodeAt(0) === 80 && text.charCodeAt(1) === 75) {
-          setUploadError('XLSX detected. Please export/save your Excel file as CSV (File → Save As → CSV UTF-8) and re-upload. Expected header: Time, X_Error, Y_Error, Z_Error, Clock_Error');
-          return;
-        }
         const { points, validation } = parseUploadedCSV(text);
-
         if (!validation.isValid) {
           setUploadError(`CSV validation failed: ${validation.errors.join(', ')}`);
           return;
         }
-        if (validation.warnings.length > 0) {
-          // still load but show warning
-          setUploadError(null);
-        }
-
         onDatasetLoaded(points, `Custom Upload: ${file.name}`);
         setUploadSuccess(
           `Successfully loaded ${points.length} observations (${validation.historicalPoints} historical + ${validation.validationPoints} validation points) — sorted chronologically, timestamps validated, missing values checked. Dataset is now active in forecasting engine.`
