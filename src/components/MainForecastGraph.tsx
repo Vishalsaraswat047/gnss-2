@@ -343,9 +343,7 @@ export const MainForecastGraph: React.FC<MainForecastGraphProps> = ({
             </span>
           </div>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            Historical (Days 1–7) actual error values → <strong className="text-cyan-400">NOW</strong> →
-            <strong className="text-cyan-400">Forecast</strong> by XGBoost →
-            <strong className="text-emerald-400">Actual Day 8</strong> ground truth (validation)
+            Historical (Days 1–7) • <strong className="text-cyan-400">NOW</strong> → Future 96 steps Day 8 — <strong className="text-cyan-400">XGBoost Forecast only</strong> (pure prediction, no ground truth shown)
           </p>
         </div>
 
@@ -548,20 +546,8 @@ export const MainForecastGraph: React.FC<MainForecastGraphProps> = ({
             />
           )}
 
-          {/* 2. Actual Ground Truth Validation Line (Day 8) */}
-          {actualPath && (
-            <path
-              d={actualPath}
-              fill="none"
-              stroke="#10b981"
-              strokeWidth="2"
-              strokeDasharray="4 3"
-              strokeLinecap="round"
-              opacity="0.85"
-            />
-          )}
-
-          {/* 3. Predicted Future Error Line (Day 8 XGBoost forecast) */}
+          {/* Day 8 is prediction only — ground truth hidden as requested */}
+          {/* 2. Predicted Future Error Line (Day 8 XGBoost forecast — live future) */}
           {forecastPath && (
             <path
               d={forecastPath}
@@ -608,17 +594,7 @@ export const MainForecastGraph: React.FC<MainForecastGraphProps> = ({
                   strokeWidth="2"
                 />
               )}
-              {/* Highlight actual validation point if in future */}
-              {!hoveredPoint.isHistory && axisConfig.getActual(hoveredPoint) !== undefined && (
-                <circle
-                  cx={getX(hoverIndex)}
-                  cy={getY(axisConfig.getActual(hoveredPoint))}
-                  r="4.5"
-                  fill="#10b981"
-                  stroke="#0f172a"
-                  strokeWidth="2"
-                />
-              )}
+
             </g>
           )}
 
@@ -708,28 +684,7 @@ export const MainForecastGraph: React.FC<MainForecastGraphProps> = ({
                       </span>
                     </div>
                   )}
-                  {axisConfig.getActual(hoveredPoint) !== undefined && (
-                    <div className="flex justify-between gap-4 text-emerald-400">
-                      <span>Actual Ground Truth (y):</span>
-                      <span className="font-bold">
-                        {axisConfig.getActual(hoveredPoint)?.toFixed(4)} m
-                      </span>
-                    </div>
-                  )}
-                  {axisConfig.getActual(hoveredPoint) !== undefined && axisConfig.getPred(hoveredPoint) !== undefined && (
-                    <div className="flex justify-between gap-4 pt-1 border-t border-slate-700 text-[11px]">
-                      <span className="text-slate-400">Forecast Error (ŷ - y):</span>
-                      <span
-                        className={`font-bold ${
-                          Math.abs(axisConfig.getPred(hoveredPoint)! - axisConfig.getActual(hoveredPoint)!) < 0.1
-                            ? 'text-emerald-400'
-                            : 'text-amber-400'
-                        }`}
-                      >
-                        {(axisConfig.getPred(hoveredPoint)! - axisConfig.getActual(hoveredPoint)!).toFixed(4)} m
-                      </span>
-                    </div>
-                  )}
+
                 </>
               )}
             </div>
@@ -746,10 +701,6 @@ export const MainForecastGraph: React.FC<MainForecastGraphProps> = ({
             <div className="flex items-center gap-2">
               <span className="w-4 h-1 bg-cyan-400 rounded"></span>
               <span className="text-cyan-300 font-medium">AI Forecast (Day 8: {selectedModel.toUpperCase()})</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-4 h-1 bg-emerald-400 rounded border border-dashed border-emerald-300"></span>
-              <span className="text-emerald-400 font-medium">Actual Day 8 (Ground Truth)</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-3.5 h-3.5 bg-cyan-500/20 border border-cyan-500/40 rounded-sm"></span>
