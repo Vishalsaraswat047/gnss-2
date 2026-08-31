@@ -229,10 +229,11 @@ export const LiveTracker: React.FC = () => {
   // reset anim when new positions arrive
   useEffect(() => { setAnimIdx(0); }, [positions]);
 
-  // Auto-load SAT-01 synthetic live on mount / when SAT-01 selected — so dashboard satellite always shows moving
+  // Auto-load synthetic live on mount / when any sat selected without data — ensures map always moves and shows correct satellite
   useEffect(() => {
-    if (noradId === 1 && !positions) {
-      const r = generateSyntheticPositions(lat, lng, alt, seconds, 'SAT-01 (Synthetic MEO)');
+    if (!positions) {
+      const name = QUICK_SATS.find(s=>s.id===noradId)?.name || (noradId===1 ? 'SAT-01 (Synthetic MEO)' : `SAT-${noradId}`);
+      const r = generateSyntheticPositions(lat, lng, alt, seconds, name, noradId);
       setPositions(r);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -266,33 +267,30 @@ export const LiveTracker: React.FC = () => {
 
   const handlePositions = async () => {
     setLoading('positions'); setError(null);
+    // For SAT-01 and when synthetic is desired, bypass API entirely — ensures dashboard satellite correctly viewed actually
+    if (noradId === 1) {
+      const r = generateSyntheticPositions(lat, lng, alt, seconds, 'SAT-01 (Synthetic MEO) — Dashboard (7-day basis)', 1);
+      setPositions(r);
+      setActivePane('positions');
+      setError(null);
+      return;
+    }
     try {
-      if (noradId === 1) {
-        // SAT-01 synthetic live — mirrors dashboard's SAT-01 (7-day training basis, not N2YO)
-        const r = generateSyntheticPositions(lat, lng, alt, seconds, 'SAT-01 (Synthetic MEO)');
-        setPositions(r);
-        setActivePane('positions');
-        // keep error null but show info that this is synthetic matching dashboard
-        setError(null);
-        return;
-      }
       const r = await getPositions(noradId, lat, lng, alt, seconds);
       setPositions(r);
       setActivePane('positions');
+      setError(null);
     } catch (e: any) {
       const msg = e.message || 'Failed to fetch';
-      // Auto-fallback to SAT-01 synthetic so map still moves — as user requested dashboard satellite live location
-      if (String(msg).toLowerCase().includes('failed to fetch') || String(msg).includes('CORS') || String(msg).includes('NetworkError')) {
-        const r = generateSyntheticPositions(lat, lng, alt, seconds, 'SAT-01 (Synthetic MEO) — fallback');
-        setPositions(r);
-        setActivePane('positions');
-        setError(`N2YO fetch failed (${msg}) — showing SAT-01 Synthetic live (dashboard's SAT-01, 7-day XGBoost basis, MEO 12h) so map keeps moving. Select SAT-01 for native dashboard satellite, or retry ISS (25544) with CORS enabled.`);
-        // do not disable live — synthetic live can keep moving
+      // Fallback: generate synthetic for the *actually selected* satellite so correct satellite is still viewed actually
+      const fallbackName = (QUICK_SATS.find(s=>s.id===noradId)?.name || `SAT-${noradId}`) + ' — synthetic fallback';
+      const r = generateSyntheticPositions(lat, lng, alt, seconds, fallbackName, noradId);
+      setPositions(r);
+      setActivePane('positions');
+      if (String(msg).toLowerCase().includes('failed to fetch') || String(msg).includes('CORS') || String(msg).includes('NetworkError') || String(msg).includes('Network Error')) {
+        setError(`N2YO fetch failed (${msg}) — showing ${fallbackName} live (synthetic orbit per-satellite — ISS LEO 92min, GPS MEO 12h, SAT-01 12h) so window still moves correctly. For true N2YO live, check CORS/API key or switch to SAT-01 (always works).`);
       } else {
-        setError(msg + ' — showing SAT-01 Synthetic fallback. Click SAT-01 button for dashboard satellite live demo.');
-        const r = generateSyntheticPositions(lat, lng, alt, seconds, 'SAT-01 (Synthetic MEO) — fallback');
-        setPositions(r);
-        setActivePane('positions');
+        setError(msg + ` — showing ${fallbackName} synthetic so map stays live correctly.`);
       }
     } finally { setLoading(null); }
   };

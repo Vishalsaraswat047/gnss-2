@@ -96,37 +96,50 @@ export function getAbove(observerLat: number, observerLng: number, observerAlt: 
     .catch(()=>fetchJSON(`${BASE}/above/${observerLat}/${observerLng}/${observerAlt}/${r}/${categoryId}&apiKey=${apiKey}`));
 }
 
-// ——— SAT-01 Synthetic Live Generator (fallback when N2YO fails or for dashboard satellite) ———
-// Uses same orbital math as mockDataset but for real-time wall clock
+// ——— Synthetic Live Generator (fallback when N2YO fails or for dashboard SAT-01) ———
+// Per-satellite realistic orbit: ISS LEO 92min, Starlink 95min, Hubble 95min, GPS MEO 12h, GOES GEO 24h, NOAA polar 101min
 export function generateSyntheticPositions(
   observerLat: number,
   observerLng: number,
   observerAlt: number,
   seconds: number,
-  satName: string = 'SAT-01 (Synthetic MEO)'
+  satName: string = 'SAT-01 (Synthetic MEO)',
+  satId: number = 1
 ): PositionsResponse {
   const now = Math.floor(Date.now() / 1000);
-  const orbitPeriodSec = 12 * 3600; // MEO 12h
+  // pick orbit per sat
+  let orbitPeriodSec: number, baseAlt: number, inclDeg: number;
+  if (satId === 25544) { orbitPeriodSec = 92*60; baseAlt = 408; inclDeg = 51.6; }         // ISS
+  else if (satId === 20580) { orbitPeriodSec = 96*60; baseAlt = 540; inclDeg = 28.5; }  // Hubble
+  else if (satId === 43013) { orbitPeriodSec = 95*60; baseAlt = 550; inclDeg = 53; }    // Starlink
+  else if (satId === 37820) { orbitPeriodSec = 12*3600; baseAlt = 20200; inclDeg = 55; } // GPS
+  else if (satId === 41866) { orbitPeriodSec = 24*3600; baseAlt = 35786; inclDeg = 0.1; } // GOES GEO
+  else if (satId === 33591) { orbitPeriodSec = 101*60; baseAlt = 870; inclDeg = 98.7; }  // NOAA 19 polar
+  else { orbitPeriodSec = 12*3600; baseAlt = 20200; inclDeg = 55; } // SAT-01 MEO default
   const baseT = now % orbitPeriodSec;
+  const incl = inclDeg * Math.PI / 180;
   const positions: Position[] = [];
   for (let i = 0; i < seconds; i++) {
     const t = baseT + i;
     const theta = (2 * Math.PI * t) / orbitPeriodSec;
-    // MEO inclination ~55°, RAAN drift ~ 0.06 deg/sec approx
-    const incl = 55 * Math.PI / 180;
     const lat = Math.asin(Math.sin(incl) * Math.sin(theta)) * 180 / Math.PI;
-    // Longitude: earth rotation + orbital node precession approx
-    const lon0 = -75; // reference
-    const lon = (((lon0 + (t * 360 / 86164) + (Math.cos(incl) * 15 * (t/3600)) ) % 360 + 540) % 360) - 180;
-    const alt = 20200 + 1.2 * Math.sin(theta * 1.5) + 0.6 * Math.cos(theta * 0.7);
-    // azimuth/elevation approx relative to observer
+    // longitude drift visible: GEO stays, LEO fast, MEO medium
+    const lonSpeed = satId===41866 ? 0 : satId===25544 || satId===20580 || satId===43013 || satId===33591 ? 0.06 : 0.02; // deg/sec
+    const lon0 = satId===1 ? -75 : -30;
+    const lon = (((lon0 + t * lonSpeed) % 360 + 540) % 360) - 180;
+    const alt = baseAlt + (satId===41866? 0 : 2 * Math.sin(theta * 1.5));
     const dLat = lat - observerLat;
     const dLon = lon - observerLng;
-    const az = (Math.atan2(Math.sin(dLon * Math.PI/180) * Math.cos(lat*Math.PI/180),
-      Math.cos(observerLat*Math.PI/180)*Math.sin(lat*Math.PI/180) - Math.sin(observerLat*Math.PI/180)*Math.cos(lat*Math.PI/180)*Math.cos(dLon*Math.PI/180)) * 180/Math.PI + 360) % 360;
-    // elevation approx: simplistic, >0 when near
-    const centralAngle = Math.acos(Math.sin(observerLat*Math.PI/180)*Math.sin(lat*Math.PI/180) + Math.cos(observerLat*Math.PI/180)*Math.cos(lat*Math.PI/180)*Math.cos(dLon*Math.PI/180)) * 180/Math.PI;
-    const el = Math.max(-90, Math.min(90, 90 - centralAngle - (alt/100) ));
+    // wrap dLon -180..180 for azimuth
+    let dLonN = dLon; while(dLonN>180) dLonN-=360; while(dLonN<-180) dLonN+=360;
+    const az = (Math.atan2(Math.sin(dLonN * Math.PI/180) * Math.cos(lat*Math.PI/180),
+      Math.cos(observerLat*Math.PI/180)*Math.sin(lat*Math.PI/180) - Math.sin(observerLat*Math.PI/180)*Math.cos(lat*Math.PI/180)*Math.cos(dLonN*Math.PI/180)) * 180/Math.PI + 360) % 360;
+    const centralAngle = Math.acos(
+      Math.max(-1, Math.min(1,
+        Math.sin(observerLat*Math.PI/180)*Math.sin(lat*Math.PI/180) + Math.cos(observerLat*Math.PI/180)*Math.cos(lat*Math.PI/180)*Math.cos(dLonN*Math.PI/180)
+      ))
+    ) * 180/Math.PI;
+    const el = Math.max(-90, Math.min(90, 90 - centralAngle - (satId===41866?0:alt/500) ));
     positions.push({
       satlatitude: Number(lat.toFixed(4)),
       satlongitude: Number(lon.toFixed(4)),
@@ -139,7 +152,7 @@ export function generateSyntheticPositions(
     });
   }
   return {
-    info: { satname: satName, satid: 1, transactionscount: 0 },
+    info: { satname: satName, satid: satId, transactionscount: 0 },
     positions,
   };
 }
