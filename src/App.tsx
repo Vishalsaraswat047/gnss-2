@@ -8,7 +8,7 @@ import {
 import { SATELLITE_DATASETS } from './data/mockDataset';
 import { runForecastingEngine, DEFAULT_RISK_THRESHOLDS } from './ml/evaluation';
 import { Header, AppTab } from './components/Header';
-import { MainForecastGraph } from './components/MainForecastGraph';
+import { MainForecastGraph, ErrorAxis } from './components/MainForecastGraph';
 import { DataPipelineView } from './components/DataPipelineView';
 import { LiveTracker } from './components/LiveTracker';
 import { RiskThresholdModal } from './components/RiskThresholdModal';
@@ -24,6 +24,7 @@ export function App() {
   const [selectedModel] = useState<ModelType>('xgboost');
   const [thresholds, setThresholds] = useState<RiskThresholds>(DEFAULT_RISK_THRESHOLDS);
   const [isThresholdModalOpen, setIsThresholdModalOpen] = useState(false);
+  const [selectedAxis, setSelectedAxis] = useState<ErrorAxis>('clock');
   const [autoPlay, setAutoPlay] = useState(false);
   const autoPlayRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -387,37 +388,45 @@ export function App() {
               </div>
             </div>
 
-            {/* Clock Error Graph Section */}
-            <div key={`graph-${resetTick}-${currentIndex}-${selectedHorizon}`} className="bg-slate-900/50 border border-slate-700 rounded-xl p-6">
-              <h2 className="text-sm font-semibold text-white uppercase tracking-wider mb-3">CLOCK ERROR — Historical | Forecast | Ground Truth <span className="text-slate-500 font-normal normal-case"> (NOW marker)</span></h2>
+            {/* Clock / Ephemeris Graph — axis switches when you click X/Y/Z cards below */}
+            <div key={`graph-${resetTick}-${currentIndex}-${selectedHorizon}-${selectedAxis}`} className="bg-slate-900/50 border border-slate-700 rounded-xl p-6">
+              <h2 className="text-sm font-semibold text-white uppercase tracking-wider mb-3">
+                {selectedAxis === 'clock' ? 'CLOCK ERROR' : selectedAxis === 'x' ? 'EPHEMERIS X_ERROR (Along-Track)' : selectedAxis === 'y' ? 'EPHEMERIS Y_ERROR (Radial)' : selectedAxis === 'z' ? 'EPHEMERIS Z_ERROR (Cross-Track)' : '3D MAGNITUDE'} — Historical | Forecast <span className="text-slate-500 font-normal normal-case"> (NOW marker) — click X/Y/Z cards to switch</span>
+              </h2>
               <MainForecastGraph
                 historicalData={historicalData}
                 forecastResult={forecastResult}
-                selectedAxis={'clock'}
-                onSelectAxis={() => {}}
+                selectedAxis={selectedAxis}
+                onSelectAxis={setSelectedAxis}
                 selectedModel={'xgboost'}
               />
-              <div className="mt-3 text-[11px] text-slate-400 flex gap-4">
-                <span><strong className="text-slate-300">Historical:</strong> known error values</span>
-                <span><strong className="text-cyan-400">Forecast:</strong> XGBoost predicted</span>
-                <span><strong className="text-emerald-400">Ground Truth:</strong> Actual Day 8 (validation)</span>
+              <div className="mt-3 text-[11px] text-slate-400 flex gap-4 flex-wrap">
+                <span><strong className="text-slate-300">Historical:</strong> Days 1–7 known</span>
+                <span><strong className="text-cyan-400">Forecast:</strong> Day 8 XGBoost prediction (live, varies per horizon)</span>
+                <span className="text-slate-500">• Click X/Y/Z cards ↓ to change graph</span>
               </div>
             </div>
 
-            {/* Ephemeris Error Section */}
+            {/* Ephemeris Error Section — CLICKABLE */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {[
-                { label: 'X_Error (Along-Track)', cur: forecastResult.currentErrors.x, pred: forecastResult.predictedErrorsAtHorizon.x },
-                { label: 'Y_Error (Radial)', cur: forecastResult.currentErrors.y, pred: forecastResult.predictedErrorsAtHorizon.y },
-                { label: 'Z_Error (Cross-Track)', cur: forecastResult.currentErrors.z, pred: forecastResult.predictedErrorsAtHorizon.z },
-              ].map(c => (
-                <div key={c.label} className="bg-slate-900/50 border border-slate-700 rounded-xl p-4">
-                  <div className="text-[10px] text-slate-500 uppercase tracking-wider">{c.label}</div>
-                  <div className="text-2xl font-mono font-bold text-white">{c.cur >= 0 ? '+' : ''}{c.cur.toFixed(4)} m</div>
-                  <div className="text-xs text-slate-400">Forecast @ {selectedHorizon}: <span className="text-cyan-300 font-mono">{c.pred >= 0 ? '+' : ''}{c.pred.toFixed(4)} m</span></div>
-                  <div className="mt-2 text-[10px] text-slate-500">E_3D = √(X²+Y²+Z²) = <span className="text-amber-300">{forecastResult.currentErrors.magnitude3D.toFixed(4)} m</span> → <span className="text-amber-300">{forecastResult.predictedErrorsAtHorizon.magnitude3D.toFixed(4)} m</span></div>
-                </div>
-              ))}
+                { key: 'x' as ErrorAxis, label: 'X_Error (Along-Track)', cur: forecastResult.currentErrors.x, pred: forecastResult.predictedErrorsAtHorizon.x, color: 'sky' },
+                { key: 'y' as ErrorAxis, label: 'Y_Error (Radial)', cur: forecastResult.currentErrors.y, pred: forecastResult.predictedErrorsAtHorizon.y, color: 'purple' },
+                { key: 'z' as ErrorAxis, label: 'Z_Error (Cross-Track)', cur: forecastResult.currentErrors.z, pred: forecastResult.predictedErrorsAtHorizon.z, color: 'pink' },
+              ].map(c => {
+                const isActive = selectedAxis === c.key;
+                return (
+                  <button key={c.label} onClick={() => setSelectedAxis(c.key)} className={`text-left bg-slate-900/50 border rounded-xl p-4 transition-all hover:border-slate-600 cursor-pointer ${isActive ? 'border-cyan-500 ring-1 ring-cyan-500/40 bg-cyan-500/10' : 'border-slate-700'}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="text-[10px] text-slate-500 uppercase tracking-wider">{c.label}</div>
+                      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${isActive ? 'bg-cyan-500 text-slate-950 border-cyan-500 font-bold' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>{isActive ? '● Viewing' : 'Click to view'}</span>
+                    </div>
+                    <div className="text-2xl font-mono font-bold text-white">{c.cur >= 0 ? '+' : ''}{c.cur.toFixed(4)} m</div>
+                    <div className="text-xs text-slate-400">Forecast @ {selectedHorizon}: <span className="text-cyan-300 font-mono">{c.pred >= 0 ? '+' : ''}{c.pred.toFixed(4)} m</span></div>
+                    <div className="mt-2 text-[10px] text-slate-500">E_3D = <span className="text-amber-300">{forecastResult.currentErrors.magnitude3D.toFixed(4)} m</span> → <span className="text-amber-300">{forecastResult.predictedErrorsAtHorizon.magnitude3D.toFixed(4)} m</span> • Click to plot {c.key.toUpperCase()} on graph ↑</div>
+                  </button>
+                );
+              })}
             </div>
 
             {/* Forecast Performance Section */}
